@@ -1,50 +1,48 @@
 /**
-	@file bc660k.cpp
-	@author Renan Tesch
+    @file bc660k.cpp
+    @author Renan Tesch
 
-	MIT License
+    MIT License
 
-	Copyright (c) Copyright 2026 Renan Tesch
-	GitHub https://github.com/TeschRenan
+    Copyright (c) Copyright 2026 Renan Tesch
+    GitHub https://github.com/TeschRenan
 
-	Permission is hereby granted, free of charge, to any person obtaining a copy
-	of this software and associated documentation files (the "Software"), to deal
-	in the Software without restriction, including without limitation the rights
-	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-	copies of the Software, and to permit persons to whom the Software is
-	furnished to do so, subject to the following conditions:
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
 
-	The above copyright notice and this permission notice shall be included in all
-	copies or substantial portions of the Software.
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
 
-	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-	SOFTWARE.
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
 */
 
 #include "bc660k.hpp"
 
 /**
  * @brief Initialize UART hardware layer.
- * @param u Pointer to UART layer structure.
  * @param tx TX GPIO pin.
  * @param rx RX GPIO pin.
  * @param port UART port number.
  * @param baud_rate UART baud rate.
  * @return void
  */
-static void uart_layer_init(uart_layer_t* u,
-                            gpio_num_t tx,
-                            gpio_num_t rx,
-                            uart_port_t port,
-                            int baud_rate)
+void bc660k::uart_layer_init(gpio_num_t tx,
+                             gpio_num_t rx,
+                             uart_port_t port,
+                             int baud_rate)
 {
-    u->port = port;
-    u->default_timeout_ms = 100;
+    uart.port = port;
+    uart.default_timeout_ms = 100;
 
     gpio_set_direction(tx, GPIO_MODE_OUTPUT);
     gpio_set_direction(rx, GPIO_MODE_INPUT);
@@ -53,11 +51,10 @@ static void uart_layer_init(uart_layer_t* u,
     uart_config_t cfg = {
         .baud_rate = baud_rate,
         .data_bits = UART_DATA_8_BITS,
-        .parity    = UART_PARITY_DISABLE,
+        .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT
-    };
+        .source_clk = UART_SCLK_DEFAULT};
 
     uart_param_config(port, &cfg);
     uart_set_pin(port, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
@@ -66,98 +63,104 @@ static void uart_layer_init(uart_layer_t* u,
 
 /**
  * @brief Write raw bytes to UART.
- * @param u Pointer to UART layer structure.
  * @param data Pointer to data buffer.
  * @param len Number of bytes to send.
  * @return Number of bytes written.
  * @return 0 If data is null or len <= 0.
  */
-static int uart_layer_write(uart_layer_t* u, const char* data, int len)
+int bc660k::uart_layer_write(const char *data, int len)
 {
-    if (!data || len <= 0) return 0;
-    return uart_write_bytes(u->port, data, len);
+    if (!data || len <= 0)
+        return 0;
+    return uart_write_bytes(uart.port, data, len);
 }
 
 /**
  * @brief Read raw bytes from UART.
- * @param u Pointer to UART layer structure.
  * @param buf Output buffer.
  * @param max_len Maximum bytes to read.
  * @param timeout_ms Timeout in milliseconds.
  * @return Number of bytes read.
  * @return 0 If buffer is null or max_len <= 0.
  */
-static int uart_layer_read(uart_layer_t* u, char* buf, int max_len, int timeout_ms)
+int bc660k::uart_layer_read(char *buf, int max_len, int timeout_ms)
 {
-    if (!buf || max_len <= 0) return 0;
-    return uart_read_bytes(u->port, (uint8_t*)buf, max_len, timeout_ms / portTICK_PERIOD_MS);
+    if (!buf || max_len <= 0)
+        return 0;
+    return uart_read_bytes(uart.port,
+                           reinterpret_cast<uint8_t *>(buf),
+                           max_len,
+                           timeout_ms / portTICK_PERIOD_MS);
 }
 
 /**
  * @brief Flush UART RX buffer.
- * @param u Pointer to UART layer structure.
  * @return void
  */
-static void uart_layer_flush(uart_layer_t* u)
+void bc660k::uart_layer_flush()
 {
-    uart_flush(u->port);
+    uart_flush(uart.port);
 }
 
 /**
  * @brief Initialize AT command layer.
- * @param at Pointer to AT layer structure.
- * @param uart Pointer to UART layer structure.
  * @return void
  */
-static void at_layer_init(at_layer_t* at, uart_layer_t* uart)
+void bc660k::at_layer_init()
 {
-    at->uart = uart;
-    memset(at->line_buf, 0, sizeof(at->line_buf));
+    at.uart = &uart;
+    memset(at.line_buf, 0, sizeof(at.line_buf));
 }
 
 /**
  * @brief Send AT command string.
- * @param at Pointer to AT layer structure.
  * @param cmd Null-terminated AT command string.
  * @return true Command sent successfully.
  * @return false Invalid command or zero length.
  */
-static bool at_send(at_layer_t* at, const char* cmd)
+bool bc660k::at_send(const char *cmd)
 {
-    if (!cmd) return false;
+    if (!cmd)
+        return false;
     int len = strlen(cmd);
-    if (len <= 0) return false;
+    if (len <= 0)
+        return false;
 
-    uart_layer_flush(at->uart);
-    uart_layer_write(at->uart, cmd, len);
+    uart_layer_flush();
+    uart_layer_write(cmd, len);
     return true;
 }
 
 /**
  * @brief Read a full line from UART until '\n'.
- * @param at Pointer to AT layer structure.
  * @param out Output buffer for line.
  * @param max_len Maximum buffer size.
  * @param timeout_ms Timeout in milliseconds.
  * @return true Line read successfully.
  * @return false Timeout or no complete line.
  */
-static bool at_read_line(at_layer_t* at, char* out, int max_len, int timeout_ms)
+bool bc660k::at_read_line(char *out, int max_len, int timeout_ms)
 {
     int idx = 0;
     int elapsed = 0;
 
-    while (elapsed < timeout_ms) {
+    while (elapsed < timeout_ms)
+    {
         char c;
-        int r = uart_layer_read(at->uart, &c, 1, 10);
+        int r = uart_layer_read(&c, 1, 10);
 
-        if (r == 1) {
-            if (c == '\n') {
+        if (r == 1)
+        {
+            if (c == '\n')
+            {
+                if (idx == 0)
+                    continue; 
                 out[idx] = '\0';
                 return true;
             }
 
-            if (c != '\r' && idx < max_len - 1) {
+            if (c != '\r' && idx < max_len - 1)
+            {
                 out[idx++] = c;
             }
         }
@@ -170,16 +173,16 @@ static bool at_read_line(at_layer_t* at, char* out, int max_len, int timeout_ms)
 
 /**
  * @brief Wait for "OK" or "ERROR" response.
- * @param at Pointer to AT layer structure.
  * @param timeout_ms Timeout in milliseconds.
  * @return true If "OK" received.
  * @return false If "ERROR" or timeout.
  */
-static bool at_expect_ok(at_layer_t* at, int timeout_ms)
+bool bc660k::at_expect_ok(int timeout_ms)
 {
     char line[256];
 
-    while (at_read_line(at, line, sizeof(line), timeout_ms)) {
+    while (at_read_line(line, sizeof(line), timeout_ms))
+    {
         if (strcmp(line, "OK") == 0)
             return true;
 
@@ -192,7 +195,6 @@ static bool at_expect_ok(at_layer_t* at, int timeout_ms)
 
 /**
  * @brief Wait for a response starting with a specific prefix.
- * @param at Pointer to AT layer structure.
  * @param prefix Expected prefix string.
  * @param out Output buffer for matched line.
  * @param max_len Maximum buffer size.
@@ -200,16 +202,17 @@ static bool at_expect_ok(at_layer_t* at, int timeout_ms)
  * @return true Prefix matched successfully.
  * @return false Timeout or "ERROR" received.
  */
-static bool at_expect_prefix(at_layer_t* at,
-                             const char* prefix,
-                             char* out,
-                             int max_len,
-                             int timeout_ms)
+bool bc660k::at_expect_prefix(const char *prefix,
+                              char *out,
+                              int max_len,
+                              int timeout_ms)
 {
     char line[256];
 
-    while (at_read_line(at, line, sizeof(line), timeout_ms)) {
-        if (strncmp(line, prefix, strlen(prefix)) == 0) {
+    while (at_read_line(line, sizeof(line), timeout_ms))
+    {
+        if (strncmp(line, prefix, strlen(prefix)) == 0)
+        {
             strncpy(out, line, max_len);
             return true;
         }
@@ -223,70 +226,220 @@ static bool at_expect_prefix(at_layer_t* at,
 
 /**
  * @brief Default constructor for BC660K driver.
- * @return void
  */
 bc660k::bc660k()
 {
-    // Initialize internal state
     mqtt_connected = false;
     mqtt_socket_open = false;
     mqtt_msg_id = 1;
 
-    // Clear UART and AT structures
     memset(&uart, 0, sizeof(uart));
     memset(&at, 0, sizeof(at));
 }
 
 /**
  * @brief Initialize BC660K modem driver and UART interface.
- * @param tx GPIO pin used as UART TX.
- * @param rx GPIO pin used as UART RX.
- * @param port UART port number.
- * @param baud_rate UART baud rate.
- * @return true Initialization completed successfully.
- * @return false Invalid parameters or UART initialization failed.
  */
 bool bc660k::init(gpio_num_t tx,
                   gpio_num_t rx,
+                  gpio_num_t rst,
                   uart_port_t port,
                   int baud_rate)
 {
-    // Store UART configuration
-    uart.port = port;
-    uart.default_timeout_ms = 100;
+    reset_pin = rst;
 
-    // Configure UART pins
-    gpio_set_direction(tx, GPIO_MODE_OUTPUT);
-    gpio_set_direction(rx, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(rx, GPIO_PULLUP_ONLY);
+    gpio_set_direction(reset_pin, GPIO_MODE_OUTPUT);
+    gpio_set_level(reset_pin, 1);
 
-    // UART configuration
-    uart_config_t cfg = {
-        .baud_rate = baud_rate,
-        .data_bits = UART_DATA_8_BITS,
-        .parity    = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT
-    };
+    uart_layer_init(tx, rx, port, baud_rate);
+    at_layer_init();
+    uart_layer_flush();
 
-    if (uart_param_config(port, &cfg) != ESP_OK)
+    if (!try_at(3, 1000))
+        reset_modem();
+
+    ESP_LOGI(__func__, "Disabling deep sleep...");
+    disable_deepsleep();
+
+    ESP_LOGI(__func__, "Checking SIM status...");
+    if (!wait_sim_ready(3))
         return false;
 
-    if (uart_set_pin(port, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK)
-        return false;
-
-    if (uart_driver_install(port, 2048, 1024, 0, NULL, 0) != ESP_OK)
-        return false;
-
-    // Initialize AT layer
-    at.uart = &uart;
-    memset(at.line_buf, 0, sizeof(at.line_buf));
-
-    // Flush UART
-    uart_flush(port);
+    ESP_LOGI(__func__, "Disabling echo...");
+    disable_echo();
 
     return true;
+}
+
+/**
+ * @brief Performs a hardware reset on the BC660K modem.
+ * @return void
+ */
+void bc660k::reset_modem()
+{
+    gpio_set_level(reset_pin, 0);
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    gpio_set_level(reset_pin, 1);
+    vTaskDelay(1500 / portTICK_PERIOD_MS); 
+}
+
+/**
+ * @brief Attempts to communicate with the modem by sending "AT" and waiting for "OK".
+ *
+ * @param attempts Number of attempts before giving up.
+ * @param timeout_ms Timeout in milliseconds for each AT response.
+ *
+ * @return true  If the modem responded with "OK" within the allowed attempts.
+ * @return false If all attempts failed, even after resetting the modem.
+ */
+bool bc660k::try_at(int attempts, int timeout_ms)
+{
+    char line[64];
+
+    for (int i = 0; i < attempts; i++)
+    {
+        at_send("AT\r\n");
+
+        if (at_read_line(line, sizeof(line), timeout_ms))
+        {
+            if (strcmp(line, "OK") == 0)
+                return true;
+        }
+        else
+        {
+            ESP_LOGE(__func__, "No response received (attempt %d)", i + 1);
+        }
+
+        reset_modem();
+    }
+
+    return false;
+}
+
+/**
+ * @brief Disables deep sleep mode using AT+QSCLK=0.
+ * @return true If command succeeded.
+ * @return false Otherwise.
+ */
+
+bool bc660k::disable_deepsleep()
+{
+    at_send("AT+QSCLK=0\r\n");
+    return at_expect_ok(3000);
+}
+
+/**
+ * @brief Checks SIM card status using AT+CPIN?.
+ * @return true If SIM is ready.
+ * @return false Otherwise.
+ */
+bool bc660k::get_cpin_status()
+{
+    char line[64];
+
+    at_send("AT+CPIN?\r\n");
+
+    if (at_expect_prefix("+CPIN: READY", line, sizeof(line), 3000))
+        return true;
+
+    return false;
+}
+/**
+ * @brief Waits for SIM card to become ready.
+ * @param attempts Number of retries.
+ * @return true If SIM becomes ready.
+ * @return false If SIM never becomes ready.
+ */
+
+bool bc660k::wait_sim_ready(int attempts)
+{
+    for (int i = 0; i < attempts; i++)
+    {
+        if (get_cpin_status())
+            return true;
+
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+
+    return false;
+}
+
+/**
+ * @brief Disables modem echo using ATE0.
+ * @return true If echo was disabled successfully.
+ * @return false Otherwise.
+ */
+
+bool bc660k::disable_echo()
+{
+    at_send("ATE0\r\n");
+    return at_expect_ok(3000);
+}
+/**
+ * @brief Reads SIM ICCID using AT+QCCID.
+ * @param out Output buffer for ICCID string.
+ * @return true If ICCID was read successfully.
+ * @return false Otherwise.
+ */
+bool bc660k::get_iccid(char *out)
+{
+    at_send("AT+QCCID\r\n");
+    return at_expect_prefix("+QCCID:", out, 64, 3000);
+}
+
+/**
+ * @brief Enables connection mode using AT+CSCON=1.
+ * @return true If command succeeded.
+ * @return false Otherwise.
+ */
+
+bool bc660k::enable_connection()
+{
+    at_send("AT+CSCON=1\r\n");
+    return at_expect_ok(3000);
+}
+
+/**
+ * @brief Waits for +IP: response indicating PDP activation.
+ * @param timeout_ms Timeout in milliseconds.
+ * @return true If IP was obtained.
+ * @return false Otherwise.
+ */
+bool bc660k::wait_for_ip(int timeout_ms, char *out_ip)
+{
+    char line[128];
+    int elapsed = 0;
+
+    while (elapsed < timeout_ms)
+    {
+        at_send("AT+CGPADDR\r\n");
+
+        if (at_expect_prefix("+CGPADDR:", line, sizeof(line), 2000))
+        {
+            char *comma = strchr(line, ',');
+            if (comma)
+            {
+                char *ip = comma + 1;
+
+                if (*ip == '"')
+                    ip++;
+                char *end = strchr(ip, '"');
+                if (end)
+                    *end = '\0';
+
+                if (strlen(ip) > 0 && strcmp(ip, "0.0.0.0") != 0)
+                {
+                    strcpy(out_ip, ip);
+                    return true;
+                }
+            }
+        }
+
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        elapsed += 1000;
+    }
+
+    return false;
 }
 
 /**
@@ -298,10 +451,10 @@ bool bc660k::init(gpio_num_t tx,
  * @return true APN configured successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::set_apn(const char* pdp,
-                     const char* apn,
-                     const char* user,
-                     const char* pass)
+bool bc660k::set_apn(const char *pdp,
+                     const char *apn,
+                     const char *user,
+                     const char *pass)
 {
     char cmd[128];
 
@@ -312,8 +465,8 @@ bool bc660k::set_apn(const char* pdp,
         snprintf(cmd, sizeof(cmd), "AT+QCGDEFCONT=\"%s\",\"%s\"\r\n",
                  pdp, apn);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -333,8 +486,8 @@ bool bc660k::set_band(int band)
     else
         return false;
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -345,7 +498,7 @@ bool bc660k::set_band(int band)
  * @return true Operator configured successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::set_operator(int mode, int format, const char* oper)
+bool bc660k::set_operator(int mode, int format, const char *oper)
 {
     char cmd[64];
 
@@ -354,8 +507,8 @@ bool bc660k::set_operator(int mode, int format, const char* oper)
     else
         snprintf(cmd, sizeof(cmd), "AT+COPS=%d,%d,\"%s\"\r\n", mode, format, oper);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 5000);
+    at_send(cmd);
+    return at_expect_ok(5000);
 }
 
 /**
@@ -365,8 +518,8 @@ bool bc660k::set_operator(int mode, int format, const char* oper)
  */
 bool bc660k::enable_network_registration()
 {
-    at_send(&at, "AT+CEREG=1\r\n");
-    return at_expect_ok(&at, 2000);
+    at_send("AT+CEREG=1\r\n");
+    return at_expect_ok(2000);
 }
 
 /**
@@ -380,10 +533,12 @@ bool bc660k::wait_network_registered(int timeout_ms)
     char line[256];
     int elapsed = 0;
 
-    while (elapsed < timeout_ms) {
-        at_send(&at, "AT+CEREG?\r\n");
+    while (elapsed < timeout_ms)
+    {
+        at_send("AT+CEREG?\r\n");
 
-        if (at_expect_prefix(&at, "+CEREG:", line, sizeof(line), 2000)) {
+        if (at_expect_prefix("+CEREG:", line, sizeof(line), 2000))
+        {
             int n, stat;
             sscanf(line, "+CEREG: %d,%d", &n, &stat);
 
@@ -404,21 +559,23 @@ bool bc660k::wait_network_registered(int timeout_ms)
  * @return true Operator retrieved successfully.
  * @return false Timeout or parsing error.
  */
-bool bc660k::get_operator(char* out_mccmnc)
+bool bc660k::get_operator(char *out_mccmnc)
 {
     char line[256];
 
-    at_send(&at, "AT+COPS?\r\n");
+    at_send("AT+COPS?\r\n");
 
-    if (!at_expect_prefix(&at, "+COPS:", line, sizeof(line), 2000))
+    if (!at_expect_prefix("+COPS:", line, sizeof(line), 2000))
         return false;
 
-    char* p = strchr(line, '"');
-    if (!p) return false;
+    char *p = strchr(line, '"');
+    if (!p)
+        return false;
 
     p++;
-    char* end = strchr(p, '"');
-    if (!end) return false;
+    char *end = strchr(p, '"');
+    if (!end)
+        return false;
 
     *end = '\0';
     strncpy(out_mccmnc, p, 16);
@@ -432,13 +589,13 @@ bool bc660k::get_operator(char* out_mccmnc)
  * @return true RSSI retrieved successfully.
  * @return false Timeout or invalid RSSI (99).
  */
-bool bc660k::get_rssi(int* rssi_dbm)
+bool bc660k::get_rssi(int *rssi_dbm)
 {
     char line[256];
 
-    at_send(&at, "AT+CSQ\r\n");
+    at_send("AT+CSQ\r\n");
 
-    if (!at_expect_prefix(&at, "+CSQ:", line, sizeof(line), 2000))
+    if (!at_expect_prefix("+CSQ:", line, sizeof(line), 2000))
         return false;
 
     int rssi_raw = 0;
@@ -457,26 +614,73 @@ bool bc660k::get_rssi(int* rssi_dbm)
  * @return true Datetime retrieved successfully.
  * @return false Timeout or parsing error.
  */
-bool bc660k::get_time(char* out_datetime)
+bool bc660k::get_time(char *out)
 {
-    char line[256];
+    char line[128];
 
-    at_send(&at, "AT+CCLK?\r\n");
+    at_send("AT+CCLK?\r\n");
 
-    if (!at_expect_prefix(&at, "+CCLK:", line, sizeof(line), 2000))
+    if (!at_expect_prefix("+CCLK:", line, sizeof(line), 2000))
         return false;
 
-    char* p = strchr(line, '"');
-    if (!p) return false;
 
+    char *p = strchr(line, ':');
+    if (!p)
+        return false;
     p++;
-    char* end = strchr(p, '"');
-    if (!end) return false;
 
-    *end = '\0';
-    strncpy(out_datetime, p, 32);
+    while (*p == ' ' || *p == '"')
+        p++;
+
+    unsigned long year, month, day, hour, minute, second;
+    char tz[8] = {0};
+
+    int n = sscanf(p, "%lu/%lu/%lu,%lu:%lu:%lu%7s",
+                   &year, &month, &day,
+                   &hour, &minute, &second,
+                   tz);
+
+    if (n < 6)
+        return false;
+
+    snprintf(out, 64, "%02lu/%02lu/%02lu,%02lu:%02lu:%02lu%s",
+             year, month, day,
+             hour, minute, second,
+             tz);
 
     return true;
+}
+
+/**
+ * @brief Wait until the modem enters RRC Connected state.
+ * @param timeout_ms Maximum wait time in milliseconds.
+ * @return true Modem entered RRC Connected state.
+ * @return false Timeout or error.
+ */
+bool bc660k::wait_rrc_connected(int timeout_ms)
+{
+    char line[64];
+    int elapsed = 0;
+
+    while (elapsed < timeout_ms)
+    {
+        at_send("AT+CSCON?\r\n");
+
+        if (at_expect_prefix("+CSCON:", line, sizeof(line), 2000))
+        {
+            int mode = -1;
+            if (sscanf(line, "+CSCON: %d", &mode) == 1)
+            {
+                if (mode == 1)
+                    return true;
+            }
+        }
+
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        elapsed += 500;
+    }
+
+    return false;
 }
 
 /**
@@ -490,8 +694,8 @@ bool bc660k::set_nwscanmode(int mode)
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QCFG=\"nwscanmode\",%d\r\n", mode);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -505,8 +709,8 @@ bool bc660k::set_iotopmode(int mode)
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QCFG=\"iotopmode\",%d\r\n", mode);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -520,8 +724,8 @@ bool bc660k::set_roaming(int enable)
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QCFG=\"roamservice\",%d\r\n", enable);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -530,13 +734,13 @@ bool bc660k::set_roaming(int enable)
  * @return true Sequence configured successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::set_scan_sequence(const char* seq)
+bool bc660k::set_scan_sequence(const char *seq)
 {
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QCFG=\"nwscanseq\",%s\r\n", seq);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -545,13 +749,13 @@ bool bc660k::set_scan_sequence(const char* seq)
  * @return true Band mask configured successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::set_band_extended(const char* mask)
+bool bc660k::set_band_extended(const char *mask)
 {
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QCFG=\"band\",%s\r\n", mask);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -560,13 +764,13 @@ bool bc660k::set_band_extended(const char* mask)
  * @return true Information retrieved successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::get_nwinfo(char* out)
+bool bc660k::get_nwinfo(char *out)
 {
     char line[256];
 
-    at_send(&at, "AT+QNWINFO\r\n");
+    at_send("AT+QNWINFO\r\n");
 
-    if (!at_expect_prefix(&at, "+QNWINFO:", line, sizeof(line), 2000))
+    if (!at_expect_prefix("+QNWINFO:", line, sizeof(line), 2000))
         return false;
 
     strncpy(out, line, 128);
@@ -579,13 +783,13 @@ bool bc660k::get_nwinfo(char* out)
  * @return true Serving cell info retrieved successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::get_serving_cell(char* out)
+bool bc660k::get_serving_cell(char *out)
 {
     char line[256];
 
-    at_send(&at, "AT+QENG=\"servingcell\"\r\n");
+    at_send("AT+QENG=\"servingcell\"\r\n");
 
-    if (!at_expect_prefix(&at, "+QENG:", line, sizeof(line), 3000))
+    if (!at_expect_prefix("+QENG:", line, sizeof(line), 3000))
         return false;
 
     strncpy(out, line, 200);
@@ -600,13 +804,13 @@ bool bc660k::get_serving_cell(char* out)
  * @return true Metrics retrieved successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::get_qcsq(int* rsrp, int* rsrq, int* snr)
+bool bc660k::get_qcsq(int *rsrp, int *rsrq, int *snr)
 {
     char line[256];
 
-    at_send(&at, "AT+QCSQ\r\n");
+    at_send("AT+QCSQ\r\n");
 
-    if (!at_expect_prefix(&at, "+QCSQ:", line, sizeof(line), 2000))
+    if (!at_expect_prefix("+QCSQ:", line, sizeof(line), 2000))
         return false;
 
     char mode[16];
@@ -622,8 +826,8 @@ bool bc660k::get_qcsq(int* rsrp, int* rsrq, int* snr)
  */
 bool bc660k::attach()
 {
-    at_send(&at, "AT+CGATT=1\r\n");
-    return at_expect_ok(&at, 5000);
+    at_send("AT+CGATT=1\r\n");
+    return at_expect_ok(5000);
 }
 
 /**
@@ -632,13 +836,13 @@ bool bc660k::attach()
  * @return true Status retrieved successfully.
  * @return false Timeout or parsing error.
  */
-bool bc660k::is_attached(bool* attached)
+bool bc660k::is_attached(bool *attached)
 {
     char line[256];
 
-    at_send(&at, "AT+CGATT?\r\n");
+    at_send("AT+CGATT?\r\n");
 
-    if (!at_expect_prefix(&at, "+CGATT:", line, sizeof(line), 2000))
+    if (!at_expect_prefix("+CGATT:", line, sizeof(line), 2000))
         return false;
 
     int state = 0;
@@ -659,8 +863,8 @@ bool bc660k::activate_pdp(int cid)
     char cmd[32];
     snprintf(cmd, sizeof(cmd), "AT+QIACT=%d\r\n", cid);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 15000);
+    at_send(cmd);
+    return at_expect_ok(15000);
 }
 
 /**
@@ -674,8 +878,8 @@ bool bc660k::deactivate_pdp(int cid)
     char cmd[32];
     snprintf(cmd, sizeof(cmd), "AT+QIDEACT=%d\r\n", cid);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 10000);
+    at_send(cmd);
+    return at_expect_ok(10000);
 }
 
 /**
@@ -685,13 +889,13 @@ bool bc660k::deactivate_pdp(int cid)
  * @return true PSM configured successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::set_psm(const char* tau, const char* active_time)
+bool bc660k::set_psm(const char *tau, const char *active_time)
 {
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QPSMS=1,,,\"%s\",\"%s\"\r\n", tau, active_time);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
 
 /**
@@ -701,28 +905,74 @@ bool bc660k::set_psm(const char* tau, const char* active_time)
  * @return true eDRX configured successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::set_edrx(const char* mode, const char* edrx_value)
+bool bc660k::set_edrx(const char *mode, const char *edrx_value)
 {
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+CEDRXS=%s,\"%s\"\r\n", mode, edrx_value);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send(cmd);
+    return at_expect_ok(3000);
 }
-
 /**
- * @brief Configure MQTT Will message support.
- * @param enable 0 = disable, 1 = enable.
- * @return true Will configuration accepted.
- * @return false Timeout or modem returned ERROR.
+ * @brief Configure MQTT settings.
+ *
+ * @return true Configuration successful.
+ * @return false Configuration failed.
  */
-bool bc660k::mqtt_config_will(int enable)
+bool bc660k::mqtt_configure()
 {
-    char cmd[64];
-    snprintf(cmd, sizeof(cmd), "AT+QMTCFG=\"will\",0,%d\r\n", enable);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 3000);
+    at_send("AT+QMTCFG=\"will\",0\r\n");
+    if (!at_expect_ok(3000))
+    {
+        ESP_LOGE(__func__, "Failed to set MQTT will configuration");
+        return false;
+    }
+
+    at_send("AT+QMTCFG=\"keepalive\",0,60\r\n");
+    if (!at_expect_ok(3000))
+    {
+        ESP_LOGE(__func__, "Failed to set MQTT keepalive configuration");
+        return false;
+    }
+
+    at_send("AT+QMTCFG=\"timeout\",0,30\r\n");
+    if (!at_expect_ok(3000))
+    {
+        ESP_LOGE(__func__, "Failed to set MQTT timeout configuration");
+        return false;
+    }
+
+    return true;
+}
+/**
+ * @brief Check if MQTT is already open for a given host and port.
+ *
+ * @param host The MQTT broker hostname or IP address.
+ * @param port The MQTT broker port number.
+ * @return true If the MQTT connection is already open for the given host and port.
+ * @return false If the MQTT connection is not open or an error occurred.
+ */
+
+bool bc660k::mqtt_is_open(const char *host, int port)
+{
+    char line[256];
+
+    at_send("AT+QMTOPEN?\r\n");
+
+    if (!at_expect_prefix("+QMTOPEN:", line, sizeof(line), 2000))
+        return false;
+
+    if (strstr(line, "+QMTOPEN: 0,0"))
+        return true;
+
+    char expected[128];
+    snprintf(expected, sizeof(expected), "+QMTOPEN: 0,\"%s\",%d", host, port);
+
+    if (strstr(line, expected))
+        return true;
+
+    return false;
 }
 
 /**
@@ -732,16 +982,35 @@ bool bc660k::mqtt_config_will(int enable)
  * @return true Connection opened successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::mqtt_open(const char* host, int port)
+bool bc660k::mqtt_open(const char *host, int port)
 {
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "AT+QMTOPEN=0,\"%s\",%d\r\n", host, port);
 
-    at_send(&at, cmd);
+    at_send(cmd);
+
+    if (!at_expect_ok(10000))
+    {
+        ESP_LOGE("mqtt_open", "Did not receive OK after QMTOPEN");
+        return false;
+    }
 
     char line[256];
-    if (!at_expect_prefix(&at, "+QMTOPEN: 0,0", line, sizeof(line), 10000))
+    if (!at_expect_prefix("+QMTOPEN:", line, sizeof(line), 15000))
+    {
+        ESP_LOGE("mqtt_open", "No +QMTOPEN URC received");
         return false;
+    }
+
+    int client = -1;
+    int result = -1;
+    sscanf(line, "+QMTOPEN: %d,%d", &client, &result);
+
+    if (result != 0)
+    {
+        ESP_LOGE("mqtt_open", "MQTT open failed with code %d", result);
+        return false;
+    }
 
     mqtt_socket_open = true;
     return true;
@@ -755,18 +1024,53 @@ bool bc660k::mqtt_open(const char* host, int port)
  * @return true Connected successfully.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::mqtt_connect(const char* client_id, const char* user, const char* pass)
+bool bc660k::mqtt_connect(const char *client_id, const char *user, const char *pass)
 {
-    char cmd[128];
-    snprintf(cmd, sizeof(cmd),
-             "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n",
-             client_id, user, pass);
+    char cmd[256];
 
-    at_send(&at, cmd);
+    if (user == nullptr || strlen(user) == 0)
+    {
+        snprintf(cmd, sizeof(cmd),
+                 "AT+QMTCONN=0,\"%s\"\r\n",
+                 client_id);
+    }
+    else
+    {
+        snprintf(cmd, sizeof(cmd),
+                 "AT+QMTCONN=0,\"%s\",\"%s\",\"%s\"\r\n",
+                 client_id, user, pass);
+    }
+
+    at_send(cmd);
+
+    if (!at_expect_ok(10000))
+    {
+        ESP_LOGE("mqtt_connect", "Did not receive OK after QMTCONN");
+        return false;
+    }
 
     char line[256];
-    if (!at_expect_prefix(&at, "+QMTCONN: 0,0,0", line, sizeof(line), 10000))
+    if (!at_expect_prefix("+QMTCONN:", line, sizeof(line), 15000))
+    {
+        ESP_LOGE("mqtt_connect", "MQTT connect failed or timed out - response: %s", line);
         return false;
+    }
+
+    int client = -1;
+    int result = -1;
+    int code = -1;
+
+    if (sscanf(line, "+QMTCONN: %d,%d,%d", &client, &result, &code) != 3)
+    {
+        ESP_LOGE("mqtt_connect", "Failed to parse QMTCONN response");
+        return false;
+    }
+
+    if (result != 0)
+    {
+        ESP_LOGE("mqtt_connect", "MQTT connect failed: result=%d code=%d", result, code);
+        return false;
+    }
 
     mqtt_connected = true;
     mqtt_msg_id = 1;
@@ -781,7 +1085,7 @@ bool bc660k::mqtt_connect(const char* client_id, const char* user, const char* p
  * @return true Message published successfully.
  * @return false Timeout, modem returned ERROR, or publish failed.
  */
-bool bc660k::mqtt_publish(const char* topic, const char* payload, int qos)
+bool bc660k::mqtt_publish(const char *topic, const char *payload, int qos)
 {
     char cmd[256];
 
@@ -791,16 +1095,16 @@ bool bc660k::mqtt_publish(const char* topic, const char* payload, int qos)
         snprintf(cmd, sizeof(cmd), "AT+QMTPUB=0,%d,%d,0,\"%s\"\r\n",
                  mqtt_msg_id++, qos, topic);
 
-    at_send(&at, cmd);
+    at_send(cmd);
 
     char line[256];
-    if (!at_expect_prefix(&at, ">", line, sizeof(line), 5000))
+    if (!at_expect_prefix(">", line, sizeof(line), 5000))
         return false;
 
-    at_send(&at, payload);
-    uart_layer_write(&uart, "\x1A", 1);
+    at_send(payload);
+    uart_layer_write("\x1A", 1);
 
-    if (!at_expect_prefix(&at, "+QMTPUB:", line, sizeof(line), 10000))
+    if (!at_expect_prefix("+QMTPUB:", line, sizeof(line), 10000))
         return false;
 
     return true;
@@ -813,16 +1117,16 @@ bool bc660k::mqtt_publish(const char* topic, const char* payload, int qos)
  * @return true Subscription accepted.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::mqtt_subscribe(const char* topic, int qos)
+bool bc660k::mqtt_subscribe(const char *topic, int qos)
 {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "AT+QMTSUB=0,%d,\"%s\",%d\r\n",
              mqtt_msg_id++, topic, qos);
 
-    at_send(&at, cmd);
+    at_send(cmd);
 
     char line[256];
-    return at_expect_prefix(&at, "+QMTSUB:", line, sizeof(line), 5000);
+    return at_expect_prefix("+QMTSUB:", line, sizeof(line), 5000);
 }
 
 /**
@@ -831,16 +1135,16 @@ bool bc660k::mqtt_subscribe(const char* topic, int qos)
  * @return true Unsubscription accepted.
  * @return false Timeout or modem returned ERROR.
  */
-bool bc660k::mqtt_unsubscribe(const char* topic)
+bool bc660k::mqtt_unsubscribe(const char *topic)
 {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "AT+QMTUNS=0,%d,\"%s\"\r\n",
              mqtt_msg_id++, topic);
 
-    at_send(&at, cmd);
+    at_send(cmd);
 
     char line[256];
-    return at_expect_prefix(&at, "+QMTUNS:", line, sizeof(line), 5000);
+    return at_expect_prefix("+QMTUNS:", line, sizeof(line), 5000);
 }
 
 /**
@@ -850,10 +1154,10 @@ bool bc660k::mqtt_unsubscribe(const char* topic)
  */
 bool bc660k::mqtt_disconnect()
 {
-    at_send(&at, "AT+QMTDISC=0\r\n");
+    at_send("AT+QMTDISC=0\r\n");
 
     char line[256];
-    if (!at_expect_prefix(&at, "+QMTDISC: 0,0", line, sizeof(line), 5000))
+    if (!at_expect_prefix("+QMTDISC: 0,0", line, sizeof(line), 5000))
         return false;
 
     mqtt_connected = false;
@@ -867,10 +1171,10 @@ bool bc660k::mqtt_disconnect()
  */
 bool bc660k::mqtt_close()
 {
-    at_send(&at, "AT+QMTCLOSE=0\r\n");
+    at_send("AT+QMTCLOSE=0\r\n");
 
     char line[256];
-    if (!at_expect_prefix(&at, "+QMTCLOSE: 0,0", line, sizeof(line), 5000))
+    if (!at_expect_prefix("+QMTCLOSE: 0,0", line, sizeof(line), 5000))
         return false;
 
     mqtt_socket_open = false;
@@ -887,8 +1191,8 @@ bool bc660k::mqtt_close()
  * @return false Timeout or modem returned ERROR.
  */
 bool bc660k::socket_open(int socket_id,
-                         const char* protocol,
-                         const char* host,
+                         const char *protocol,
+                         const char *host,
                          int port)
 {
     char cmd[128];
@@ -896,13 +1200,13 @@ bool bc660k::socket_open(int socket_id,
              "AT+QIOPEN=1,%d,\"%s\",\"%s\",%d,0,0\r\n",
              socket_id, protocol, host, port);
 
-    at_send(&at, cmd);
+    at_send(cmd);
 
     char line[256];
     char expected[32];
     snprintf(expected, sizeof(expected), "+QIOPEN: %d,0", socket_id);
 
-    if (!at_expect_prefix(&at, expected, line, sizeof(line), 15000))
+    if (!at_expect_prefix(expected, line, sizeof(line), 15000))
         return false;
 
     return true;
@@ -919,8 +1223,8 @@ bool bc660k::socket_close(int socket_id)
     char cmd[32];
     snprintf(cmd, sizeof(cmd), "AT+QICLOSE=%d\r\n", socket_id);
 
-    at_send(&at, cmd);
-    return at_expect_ok(&at, 5000);
+    at_send(cmd);
+    return at_expect_ok(5000);
 }
 
 /**
@@ -932,22 +1236,22 @@ bool bc660k::socket_close(int socket_id)
  * @return false Timeout, modem returned ERROR, or send failed.
  */
 bool bc660k::socket_send(int socket_id,
-                         const char* data,
+                         const char *data,
                          int data_len)
 {
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QISEND=%d,%d\r\n", socket_id, data_len);
 
-    at_send(&at, cmd);
+    at_send(cmd);
 
     char line[256];
-    if (!at_expect_prefix(&at, ">", line, sizeof(line), 5000))
+    if (!at_expect_prefix(">", line, sizeof(line), 5000))
         return false;
 
-    uart_layer_write(&uart, data, data_len);
-    uart_layer_write(&uart, "\x1A", 1);
+    uart_layer_write(data, data_len);
+    uart_layer_write("\x1A", 1);
 
-    if (!at_expect_prefix(&at, "+QISEND:", line, sizeof(line), 10000))
+    if (!at_expect_prefix("+QISEND:", line, sizeof(line), 10000))
         return false;
 
     return true;
@@ -963,17 +1267,17 @@ bool bc660k::socket_send(int socket_id,
  * @return false Timeout or modem returned ERROR.
  */
 bool bc660k::socket_receive(int socket_id,
-                            char* out,
+                            char *out,
                             int max_len,
                             int timeout_ms)
 {
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+QIRD=%d,%d\r\n", socket_id, max_len);
 
-    at_send(&at, cmd);
+    at_send(cmd);
 
     char line[256];
-    if (!at_expect_prefix(&at, "+QIRD:", line, sizeof(line), timeout_ms))
+    if (!at_expect_prefix("+QIRD:", line, sizeof(line), timeout_ms))
         return false;
 
     int len = 0;
@@ -982,7 +1286,7 @@ bool bc660k::socket_receive(int socket_id,
     if (len <= 0)
         return false;
 
-    int r = uart_layer_read(&uart, out, len, timeout_ms);
+    int r = uart_layer_read(out, len, timeout_ms);
     if (r <= 0)
         return false;
 
