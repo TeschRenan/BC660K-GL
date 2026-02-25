@@ -222,6 +222,74 @@ static bool at_expect_prefix(at_layer_t* at,
 }
 
 /**
+ * @brief Default constructor for BC660K driver.
+ * @return void
+ */
+bc660k::bc660k()
+{
+    // Initialize internal state
+    mqtt_connected = false;
+    mqtt_socket_open = false;
+    mqtt_msg_id = 1;
+
+    // Clear UART and AT structures
+    memset(&uart, 0, sizeof(uart));
+    memset(&at, 0, sizeof(at));
+}
+
+/**
+ * @brief Initialize BC660K modem driver and UART interface.
+ * @param tx GPIO pin used as UART TX.
+ * @param rx GPIO pin used as UART RX.
+ * @param port UART port number.
+ * @param baud_rate UART baud rate.
+ * @return true Initialization completed successfully.
+ * @return false Invalid parameters or UART initialization failed.
+ */
+bool bc660k::init(gpio_num_t tx,
+                  gpio_num_t rx,
+                  uart_port_t port,
+                  int baud_rate)
+{
+    // Store UART configuration
+    uart.port = port;
+    uart.default_timeout_ms = 100;
+
+    // Configure UART pins
+    gpio_set_direction(tx, GPIO_MODE_OUTPUT);
+    gpio_set_direction(rx, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(rx, GPIO_PULLUP_ONLY);
+
+    // UART configuration
+    uart_config_t cfg = {
+        .baud_rate = baud_rate,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT
+    };
+
+    if (uart_param_config(port, &cfg) != ESP_OK)
+        return false;
+
+    if (uart_set_pin(port, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK)
+        return false;
+
+    if (uart_driver_install(port, 2048, 1024, 0, NULL, 0) != ESP_OK)
+        return false;
+
+    // Initialize AT layer
+    at.uart = &uart;
+    memset(at.line_buf, 0, sizeof(at.line_buf));
+
+    // Flush UART
+    uart_flush(port);
+
+    return true;
+}
+
+/**
  * @brief Configure APN parameters.
  * @param pdp PDP type (e.g., "IP").
  * @param apn APN name.
