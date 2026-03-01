@@ -43,6 +43,15 @@ private:
     bool at_expect_ok(int timeout_ms);
     bool at_expect_prefix(const char *prefix, char *out, int max_len, int timeout_ms);
 
+    static constexpr int URC_RECV_SLOTS = 4;      /**< Maximum queued inbound messages. */
+    static constexpr int URC_RECV_LINE_MAX = 384; /**< Maximum raw URC line length. */
+
+    char _urc_recv_buf[URC_RECV_SLOTS][URC_RECV_LINE_MAX];
+    int _urc_recv_head = 0; /**< Write index (producer). */
+    int _urc_recv_tail = 0; /**< Read index (consumer). */
+
+    void urc_recv_push(const char *line);
+
     void reset_modem();
     bool try_at(int attempts, int timeout_ms);
     bool get_cpin_status();
@@ -67,7 +76,7 @@ public:
     bool get_iccid(char *out);
     bool set_band(int band);
     bool enable_connection();
-    bool wait_for_ip(int timeout_ms, char* out_ip);
+    bool wait_for_ip(int timeout_ms, char *out_ip);
     bool set_operator(int mode, int format, const char *oper);
     bool enable_network_registration();
     bool wait_network_registered(int timeout_ms);
@@ -94,7 +103,7 @@ public:
     bool set_psm(const char *tau, const char *active_time);
     bool set_edrx(const char *mode, const char *edrx_value);
 
-    bool mqtt_is_open(const char* host, int port);
+    bool mqtt_is_open(const char *host, int port);
     bool mqtt_configure();
     bool mqtt_open(const char *host, int port);
     bool mqtt_connect(const char *client_id, const char *user, const char *pass);
@@ -103,6 +112,7 @@ public:
     bool mqtt_unsubscribe(const char *topic);
     bool mqtt_disconnect();
     bool mqtt_close();
+    bool mqtt_receive(char *topic, size_t topic_len, char *payload, size_t payload_len, int timeout_ms = 0);
 
     bool socket_open(int socket_id, const char *protocol, const char *host, int port);
     bool socket_close(int socket_id);

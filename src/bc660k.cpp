@@ -211,6 +211,14 @@ bool bc660k::at_expect_prefix(const char *prefix,
 
     while (at_read_line(line, sizeof(line), timeout_ms))
     {
+        /* Sidetrack inbound MQTT messages so they are never lost during
+         * an unrelated AT command exchange. */
+        if (strncmp(line, "+QMTRECV:", 9) == 0)
+        {
+            urc_recv_push(line);
+            continue;
+        }
+
         if (strncmp(line, prefix, strlen(prefix)) == 0)
         {
             strncpy(out, line, max_len);
@@ -235,6 +243,9 @@ bc660k::bc660k()
 
     memset(&uart, 0, sizeof(uart));
     memset(&at, 0, sizeof(at));
+    memset(_urc_recv_buf, 0, sizeof(_urc_recv_buf));
+    _urc_recv_head = 0;
+    _urc_recv_tail = 0;
 }
 
 /**
@@ -1291,5 +1302,154 @@ bool bc660k::socket_receive(int socket_id,
         return false;
 
     out[r] = '\0';
+    return true;
+}
+
+/**
+ * @brief Push a raw `+QMTRECV:` URC line into the internal ring buffer.
+ *
+ * @details Called exclusively from @ref at_expect_prefix whenever it intercepts
+ * a `+QMTRECV:` line while waiting for another command response. If the ring
+ * buffer is full the oldest entry is silently overwritten (head advances).
+ *
+ * @param line Null-terminated raw URC line starting with `+QMTRECV:`.
+ */
+void bc660k::urc_recv_push(const char *line)
+{
+    int next_head = (_urc_recv_head + 1) % URC_RECV_SLOTS;
+
+    if (next_head == _urc_recv_tail)
+    {
+        /* Buffer full — drop oldest entry by advancing tail. */
+        ESP_LOGW("bc660k", "URC recv buffer full, dropping oldest message");
+        _urc_recv_tail = (_urc_recv_tail + 1) % URC_RECV_SLOTS;
+    }
+
+    strncpy(_urc_recv_buf[_urc_recv_head], line, URC_RECV_LINE_MAX - 1);
+    _urc_recv_buf[_urc_recv_head][URC_RECV_LINE_MAX - 1] = '\0';
+    _urc_recv_head = next_head;
+}
+
+/**
+ * @brief Retrieve one inbound MQTT message from the URC ring buffer.
+ *
+ * @details The BC660K pushes received MQTT messages as an unsolicited result
+ * code in the following format (BC660K-GL MQTT Application Note §3.3):
+ * @code
+ * +QMTRECV: <TCP_connectID>,<msgID>,<topic>[,<payload_len>],<payload>
+ * @endcode
+ *
+ * This function first checks the internal URC ring buffer populated by
+ * @ref urc_recv_push. If the buffer is empty and @p timeout_ms > 0 it reads
+ * raw lines from the UART until a `+QMTRECV:` line arrives or the timeout
+ * expires. The parsed topic and payload are written to the caller's buffers.
+ *
+ * @param topic       Output buffer for the message topic string.
+ * @param topic_len   Size of @p topic buffer in bytes.
+ * @param payload     Output buffer for the message payload string.
+ * @param payload_len Size of @p payload buffer in bytes.
+ * @param timeout_ms  Maximum time to wait for a new message (0 = non-blocking).
+ * @return true  A message was successfully parsed.
+ * @return false No message available within @p timeout_ms.
+ */
+bool bc660k::mqtt_receive(char *topic,   size_t topic_len,
+                          char *payload, size_t payload_len,
+                          int timeout_ms)
+{
+    char raw[URC_RECV_LINE_MAX];
+
+    /* ── 1. Check ring buffer first (messages captured during AT exchanges) ── */
+    if (_urc_recv_tail != _urc_recv_head)
+    {
+        strncpy(raw, _urc_recv_buf[_urc_recv_tail], sizeof(raw) - 1);
+        raw[sizeof(raw) - 1] = '\0';
+        _urc_recv_tail = (_urc_recv_tail + 1) % URC_RECV_SLOTS;
+        goto parse;
+    }
+
+    /* ── 2. Optionally wait for a new URC on the UART ─────────────────────── */
+    if (timeout_ms > 0)
+    {
+        if (!at_expect_prefix("+QMTRECV:", raw, sizeof(raw), timeout_ms))
+            return false;
+        goto parse;
+    }
+
+    return false;
+
+parse:
+    /*
+     * Raw line format (fields separated by commas, topic and payload unquoted
+     * per the BC660K-GL AT manual when QMTCFG "recv/mode" is 0):
+     *
+     *   +QMTRECV: <conn_id>,<msg_id>,"<topic>",<payload_len>,"<payload>"
+     *
+     * We locate the topic by finding the first '"', and the payload by
+     * finding the third '"' (after conn_id and msg_id fields).
+     */
+    {
+        /* Skip prefix "+QMTRECV: " */
+        const char *p = strchr(raw, ':');
+        if (!p) return false;
+        p++; /* skip ':' */
+        while (*p == ' ') p++;
+
+        /* Skip conn_id and msg_id (two comma-separated integers) */
+        for (int commas = 0; commas < 2; commas++)
+        {
+            p = strchr(p, ',');
+            if (!p) return false;
+            p++; /* skip ',' */
+        }
+
+        /* ── Parse topic ── */
+        if (*p == '"') p++; /* skip opening quote if present */
+        const char *topic_start = p;
+        const char *topic_end   = strchr(p, '"');
+        if (!topic_end)
+        {
+            /* Topic without quotes — delimited by the next comma. */
+            topic_end = strchr(p, ',');
+            if (!topic_end) return false;
+        }
+
+        size_t tlen = (size_t)(topic_end - topic_start);
+        if (tlen >= topic_len) tlen = topic_len - 1;
+        strncpy(topic, topic_start, tlen);
+        topic[tlen] = '\0';
+
+        /* ── Skip to payload (past optional payload_len field) ── */
+        p = topic_end;
+        if (*p == '"') p++; /* skip closing topic quote */
+        p = strchr(p, ',');
+        if (!p) return false;
+        p++; /* skip ',' */
+
+        /* If the next token looks like a number it is payload_len — skip it. */
+        if (*p >= '0' && *p <= '9')
+        {
+            p = strchr(p, ',');
+            if (!p) return false;
+            p++; /* skip ',' */
+        }
+
+        /* ── Parse payload ── */
+        if (*p == '"') p++; /* skip opening quote if present */
+        const char *payload_start = p;
+
+        /* Strip trailing quote and/or CR/LF */
+        size_t plen = strlen(payload_start);
+        while (plen > 0 && (payload_start[plen - 1] == '"'  ||
+                             payload_start[plen - 1] == '\r' ||
+                             payload_start[plen - 1] == '\n'))
+        {
+            plen--;
+        }
+
+        if (plen >= payload_len) plen = payload_len - 1;
+        strncpy(payload, payload_start, plen);
+        payload[plen] = '\0';
+    }
+
     return true;
 }
