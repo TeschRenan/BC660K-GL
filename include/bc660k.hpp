@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <time.h>
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -83,6 +84,7 @@ public:
     bool get_operator(char *out_mccmnc);
     bool get_rssi(int *rssi_dbm);
     bool get_time(char *out_datetime);
+    bool get_time_utc(time_t *out_epoch);
     bool wait_rrc_connected(int timeout_ms);
 
     bool set_nwscanmode(int mode);

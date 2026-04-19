@@ -663,6 +663,77 @@ bool bc660k::get_time(char *out)
 }
 
 /**
+ * @brief Get network date/time as a UTC epoch (seconds since 1970-01-01).
+ *
+ * Parses +CCLK, which reports local-modem time with a timezone offset in
+ * quarter-hours, and converts to UTC using a self-contained Gregorian
+ * algorithm (no dependency on the process TZ env var).
+ *
+ * @param out_epoch Output UTC epoch.
+ * @return true On success.
+ * @return false Timeout or parsing error.
+ */
+bool bc660k::get_time_utc(time_t *out_epoch)
+{
+    if (!out_epoch)
+        return false;
+
+    char line[128];
+
+    at_send("AT+CCLK?\r\n");
+
+    if (!at_expect_prefix("+CCLK:", line, sizeof(line), 2000))
+        return false;
+
+    char *p = strchr(line, ':');
+    if (!p)
+        return false;
+    p++;
+    while (*p == ' ' || *p == '"')
+        p++;
+
+    unsigned int year, month, day, hour, minute, second;
+    char sign = '+';
+    int tz_quarters = 0;
+    int n = sscanf(p, "%u/%u/%u,%u:%u:%u%c%d",
+                   &year, &month, &day,
+                   &hour, &minute, &second,
+                   &sign, &tz_quarters);
+
+    if (n < 6)
+        return false;
+
+    // CCLK 2-digit year: 00..99 maps to 2000..2099.
+    int y = 2000 + (int)year;
+    int m = (int)month;
+    int d = (int)day;
+
+    // Days from civil (y, m, d) to 1970-01-01, Gregorian.
+    // Ref: http://howardhinnant.github.io/date_algorithms.html (days_from_civil)
+    int yy = y - (m <= 2 ? 1 : 0);
+    int era = (yy >= 0 ? yy : yy - 399) / 400;
+    unsigned yoe = (unsigned)(yy - era * 400);
+    unsigned doy = (153U * (unsigned)(m > 2 ? m - 3 : m + 9) + 2U) / 5U + (unsigned)d - 1U;
+    unsigned doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;
+    int64_t days = (int64_t)era * 146097 + (int64_t)doe - 719468;
+
+    int64_t epoch = days * 86400
+                  + (int64_t)hour * 3600
+                  + (int64_t)minute * 60
+                  + (int64_t)second;
+
+    if (n >= 8) {
+        int64_t offset_sec = (int64_t)tz_quarters * 15 * 60;
+        if (sign == '-')
+            offset_sec = -offset_sec;
+        epoch -= offset_sec;
+    }
+
+    *out_epoch = (time_t)epoch;
+    return true;
+}
+
+/**
  * @brief Wait until the modem enters RRC Connected state.
  * @param timeout_ms Maximum wait time in milliseconds.
  * @return true Modem entered RRC Connected state.
