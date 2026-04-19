@@ -260,7 +260,7 @@ bool bc660k::init(gpio_num_t tx,
     reset_pin = rst;
 
     gpio_set_direction(reset_pin, GPIO_MODE_OUTPUT);
-    gpio_set_level(reset_pin, 1);
+    gpio_set_level(reset_pin, 0);
 
     uart_layer_init(tx, rx, port, baud_rate);
     at_layer_init();
@@ -288,9 +288,9 @@ bool bc660k::init(gpio_num_t tx,
  */
 void bc660k::reset_modem()
 {
-    gpio_set_level(reset_pin, 0);
-    vTaskDelay(200 / portTICK_PERIOD_MS);
     gpio_set_level(reset_pin, 1);
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    gpio_set_level(reset_pin, 0);
     vTaskDelay(1500 / portTICK_PERIOD_MS); 
 }
 
