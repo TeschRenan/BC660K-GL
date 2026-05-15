@@ -145,19 +145,20 @@ bool bc660k::at_send(const char *cmd)
 bool bc660k::at_read_line(char *out, int max_len, int timeout_ms)
 {
     int idx = 0;
-    int elapsed = 0;
+    int idle = 0;   /* Tempo sem bytes (inter-byte). Resetado a cada byte. */
 
-    while (elapsed < timeout_ms)
+    while (idle < timeout_ms)
     {
         char c;
         int r = uart_layer_read(&c, 1, 10);
 
         if (r == 1)
         {
+            idle = 0;   /* Byte recebido — reseta timeout. */
             if (c == '\n')
             {
                 if (idx == 0)
-                    continue; 
+                    continue;
                 out[idx] = '\0';
                 return true;
             }
@@ -167,8 +168,10 @@ bool bc660k::at_read_line(char *out, int max_len, int timeout_ms)
                 out[idx++] = c;
             }
         }
-
-        elapsed += 10;
+        else
+        {
+            idle += 10;
+        }
     }
 
     return false;
